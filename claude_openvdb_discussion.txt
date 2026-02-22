@@ -1,0 +1,81 @@
+Let me investigate the repos and the current state of OpenVDB Python bindings to give you a well-informed recommendation.Now let me read that JangaFX deep dive on the VDB file format — it's one of the only reverse-engineered descriptions of the binary format:Now let me check the current state of `import openvdb` in Blender's bundled Python and alternative approaches:Okay, I now have a thorough picture of the landscape. Here's my analysis and recommendation.
+
+---
+
+## The Key Insight: You Don't Need `theNewFlesh/pyopenvdb`
+
+There's a critical distinction that gets muddled in search results. There are actually **three different things** all called "pyopenvdb":
+
+1. **`theNewFlesh/pyopenvdb`** (the repo you linked) — a third-party packaging effort, stuck on Python 3.7/3.8, essentially abandoned. This is *not* the official binding and you should not invest effort here.
+
+2. **The official OpenVDB Python module** — maintained by the Academy Software Foundation as part of the [main OpenVDB repo](https://github.com/AcademySoftwareFoundation/openvdb). In v12+ the module was renamed from `pyopenvdb` to `openvdb` and ported from pybind11 to nanobind. This is actively maintained.
+
+3. **Blender's bundled copy** of #2 — Official Blender downloads from blender.org (not distro-packaged builds) have shipped the `openvdb` Python module since roughly Blender 3.5. As of Blender 4.4, `import pyopenvdb` no longer works; it's `import openvdb` only.
+
+## The Simplest Path: Use Blender's Bundled `openvdb`
+
+Since your addon runs inside Blender, **you already have the official OpenVDB Python bindings available** — no external dependency needed. The workflow for NetCDF → VDB inside your SciBlend fork would be:
+
+```python
+import openvdb
+import numpy as np
+from netCDF4 import Dataset
+
+# 1. Read your NetCDF data
+ds = Dataset("simulation.nc")
+data = np.array(ds.variables["temperature"][:], dtype=np.float32)
+
+# 2. Create an OpenVDB FloatGrid
+grid = openvdb.FloatGrid()
+grid.name = "temperature"
+
+# 3. Copy numpy array directly into the grid
+#    copyFromArray handles active/inactive voxel marking automatically
+#    (values equal to the background value become inactive)
+grid.copyFromArray(data)
+
+# 4. Optionally set the transform (voxel size, offset)
+grid.transform = openvdb.createLinearTransform(voxelSize=0.1)
+
+# 5. Write to disk
+openvdb.write("/path/to/output.vdb", grids=[grid])
+```
+
+That's it. `copyFromArray` accepts 3D numpy arrays for scalar grids and 4D arrays for vector grids, and it's implemented in C++ so it's fast. You can also set a tolerance so that near-background values get marked inactive (enabling VDB's sparse storage benefits).
+
+## What About the Alternatives?
+
+Here's why the other approaches are worse for your situation:
+
+**VTK's `vtkOpenVDBWriter`** — Exists in C++ VTK but the PyPI VTK wheels are *not* built with OpenVDB support. SciBlend already bundles VTK, but unless you build custom VTK wheels with `-DVTK_MODULE_ENABLE_VTK_IOOpenVDB=YES`, `vtk.vtkOpenVDBWriter` won't be available. More complexity for no gain.
+
+**conda-forge `openvdb`** — Provides the Python module, but it's a separate Python environment from Blender's. You'd need to bridge between them (subprocess calls, etc.), which defeats the purpose.
+
+**Pure Python VDB writer** — The VDB file format has no formal specification. The best reverse-engineering documentation is the [JangaFX deep dive](https://jangafx.com/insights/vdb-a-deep-dive), which is excellent but covers only the 5-4-3 variant writer and notes it took substantial effort to deduce the binary layout from the C++ source. Writing a pure Python implementation would be a significant project and would likely be slower and less reliable than using the official C++ library that Blender already bundles.
+
+**Improving `theNewFlesh/pyopenvdb`** — This is the worst option. It's pinned to Python 3.7, uses Docker for builds, and reimplements poorly what the official project already does well. Any effort spent here would be wasted.
+
+## Practical Considerations for Your SciBlend Fork
+
+A few things to handle:
+
+**Detection and fallback.** Not all Blender installs include the module (distro-packaged builds like NixOS or Flatpak may omit it). Your addon should gracefully detect this:
+
+```python
+try:
+    import openvdb
+    HAS_OPENVDB = True
+except ImportError:
+    HAS_OPENVDB = False
+    # Inform user they need official Blender download
+```
+
+**Non-uniform grids.** NetCDF data often has non-uniform spacing. OpenVDB grids use a single linear transform (uniform voxel size), so you'll need to resample your data onto a regular grid before `copyFromArray`. SciBlend v1.1.2's release notes mention this resampling logic is already implemented — you'd just wire it into this path.
+
+**Multiple grids per file.** You can write multiple named grids (density, temperature, velocity) into a single `.vdb` file, and Blender's Volume Info node can address them by name in the shader. This is how you'd handle multi-variable NetCDF data.
+
+**Transform/offset.** Use `openvdb.createLinearTransform()` to set voxel size and the grid's `transform` property, plus grid metadata, to ensure the volume aligns correctly in Blender's world space.
+
+## Summary
+
+Don't improve `theNewFlesh/pyopenvdb`. Don't write a pure Python VDB serializer. Just use `import openvdb` inside Blender — it's already there, it's the official ASWF-maintained binding, it has numpy integration via `copyFromArray`/`copyToArray`, and it does exactly what you need: create `FloatGrid`s from numpy arrays and write `.vdb` files. Your addon code stays simple and has zero additional dependencies beyond what Blender ships.
