@@ -30,37 +30,18 @@ find wheels/ -name "*networkx*"
 find wheels/ -name "*imageio*"
 ```
 
-## Step 3: Handle pyopenvdb (Special Case)
+## Step 3: About openvdb (No Action Needed!)
 
-**Important:** pyopenvdb is NOT in the constraint files because it's difficult to obtain as a wheel.
+**Good news:** The `openvdb` module is bundled with official Blender 4.4+ downloads!
 
-### Option A: Skip pyopenvdb (Recommended for Development)
-- Volume mode will show an error if pyopenvdb is not available
-- Users can install it manually: `pip install pyopenvdb`
-- Isosurface mode will work fine without it
+- Volume mode will work automatically with official Blender builds
+- No need to add openvdb to constraint files
+- No wheels to download
+- **Only caveat:** Distro-packaged Blender (flatpak, snap, apt) may not include it
 
-### Option B: Try to Find pyopenvdb Wheels
-pyopenvdb wheels are rarely available on PyPI. You may need to:
-
-1. **Try pip download (may fail):**
-   ```bash
-   python3 -m pip download pyopenvdb --dest wheels/linux-x64 --only-binary=:all: --python-version=3.11 --platform=manylinux2014_x86_64 || echo "Not available"
-   python3 -m pip download pyopenvdb --dest wheels/windows-x64 --only-binary=:all: --python-version=3.11 --platform=win_amd64 || echo "Not available"
-   ```
-
-2. **Use conda-forge to get it:**
-   ```bash
-   # Install conda if you don't have it
-   # Then:
-   conda create -n vdb python=3.11
-   conda activate vdb
-   conda install -c conda-forge pyopenvdb
-   # Copy the .whl from conda environment to wheels/
-   ```
-
-3. **Build from source** (advanced, time-consuming)
-
-4. **Document as optional dependency** (easiest approach)
+If users get an "openvdb not available" error, they should:
+1. Download official Blender from blender.org instead of using distro packages
+2. Or manually install: `$BLENDER_PYTHON -m pip install openvdb` (may require building from source)
 
 ## Step 4: Generate Wheel List for Manifest
 
@@ -150,10 +131,10 @@ except ImportError as e:
     print(f"✗ scikit-image: {e}")
 
 try:
-    import pyopenvdb as vdb
-    print(f"✓ pyopenvdb available")
+    import openvdb
+    print(f"✓ openvdb available (bundled with Blender)")
 except ImportError as e:
-    print(f"⚠ pyopenvdb: {e} (optional)")
+    print(f"⚠ openvdb: {e} (use official Blender build)")
 ```
 
 ## Troubleshooting
@@ -170,10 +151,11 @@ except ImportError as e:
 - Verify wheels are actually in the `wheels/` directory
 - Check Blender console for specific import errors
 
-### pyopenvdb not available
-- Document it as optional in README
+### openvdb not available
+- This means the user is using a distro-packaged Blender
+- Recommend downloading official Blender from blender.org
 - Volume mode will gracefully fail with clear error message
-- Users can install manually if needed
+- Users can manually install if needed (may require building from source)
 
 ## Final Checklist
 
@@ -185,11 +167,12 @@ except ImportError as e:
 - [ ] Verified xarray/dask imports work
 - [ ] Tested 2D surface mode (should work without changes)
 - [ ] Tested isosurface mode (requires scikit-image)
-- [ ] Tested volume mode (requires pyopenvdb - may skip if not available)
+- [ ] Tested volume mode (requires official Blender build with openvdb)
 - [ ] Updated version number in `blender_manifest.toml` to 1.3.0 or appropriate
 
 ## Notes
 
 - The constraints files now include all dependencies needed for xarray, dask, and scikit-image
-- pyopenvdb is intentionally NOT in constraints due to availability issues
-- Consider documenting pyopenvdb as an "optional advanced feature" in user documentation
+- `openvdb` is NOT in constraints because it's bundled with official Blender 4.4+ downloads
+- Volume mode requires official Blender builds (not distro packages like flatpak/snap)
+- If users report "openvdb not available" errors, recommend downloading from blender.org

@@ -15,7 +15,10 @@ BLENDER_PYTHON="/path/to/blender/4.5/python/bin/python3.11"
 blender --background --python-expr "import sys; print(sys.executable)"
 
 # Install required packages
-$BLENDER_PYTHON -m pip install xarray dask scikit-image pyopenvdb
+$BLENDER_PYTHON -m pip install xarray dask scikit-image
+
+# Note: openvdb is bundled with official Blender builds (4.4+)
+# If using a distro/flatpak build, you may need to install it separately
 ```
 
 ### Step 2: Install Extension in Development Mode
@@ -147,10 +150,11 @@ If you see: "xarray/dask is not available"
 If you see: "scikit-image is not available" in Isosurface mode
 - Install: `$BLENDER_PYTHON -m pip install scikit-image`
 
-### Missing pyopenvdb Error
-If you see: "pyopenvdb is not available" in Volume mode
-- Install: `$BLENDER_PYTHON -m pip install pyopenvdb`
-- If installation fails, you may need to build from source or install via conda
+### Missing openvdb Error
+If you see: "openvdb is not available" in Volume mode
+- You're likely using a distro-packaged Blender (flatpak, snap, apt)
+- Solution: Download official Blender from blender.org
+- Alternative: Install manually `$BLENDER_PYTHON -m pip install openvdb` (may require building from source)
 
 ### Extension Doesn't Show Up
 - Make sure you're using Blender 4.5.1 or newer (check `blender_manifest.toml` line 19)
