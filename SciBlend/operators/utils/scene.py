@@ -73,9 +73,12 @@ def keyframe_visibility_single_frame(obj: bpy.types.Object, frame: int) -> None:
 def enforce_constant_interpolation(obj: bpy.types.Object) -> None:
 	"""Force all keyframes on the object's action to use CONSTANT interpolation."""
 	if obj.animation_data and obj.animation_data.action:
-		for fcurve in obj.animation_data.action.fcurves:
-			for kf in fcurve.keyframe_points:
-				kf.interpolation = 'CONSTANT' 
+		action = obj.animation_data.action
+		# Check if action has fcurves attribute (some action types might not)
+		if hasattr(action, 'fcurves') and action.fcurves:
+			for fcurve in action.fcurves:
+				for kf in fcurve.keyframe_points:
+					kf.interpolation = 'CONSTANT' 
 
 
 def get_import_target_collection(context: bpy.types.Context, create_new: bool, base_name: str) -> bpy.types.Collection:

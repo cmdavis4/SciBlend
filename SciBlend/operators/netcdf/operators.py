@@ -661,9 +661,9 @@ class ImportNetCDFOperator(bpy.types.Operator, ImportHelper):
 
             # Create Blender mesh
             mesh_name = (
-                f"Isosurface_{frame+1}"
+                f"{self.variable_name}_Isosurface_{frame+1}"
                 if has_time
-                else f"Isosurface_{self.variable_name}"
+                else f"{self.variable_name}_Isosurface"
             )
             mesh = bpy.data.meshes.new(mesh_name)
             obj = bpy.data.objects.new(mesh_name, mesh)
@@ -781,45 +781,55 @@ class ImportNetCDFOperator(bpy.types.Operator, ImportHelper):
             else:
                 data_slice = variable
 
-            # Get original dimensions
+            # Get original dimensions and coordinate ranges
             orig_z = len(data_slice.coords[z_dim])
             orig_y = len(data_slice.coords[y_dim])
             orig_x = len(data_slice.coords[x_dim])
 
+            # Store original coordinate ranges for spatial positioning
+            x_min = float(data_slice[x_dim].min())
+            x_max = float(data_slice[x_dim].max())
+            y_min = float(data_slice[y_dim].min())
+            y_max = float(data_slice[y_dim].max())
+            z_min = float(data_slice[z_dim].min())
+            z_max = float(data_slice[z_dim].max())
+
+            # Calculate coordinate ranges
+            x_range = x_max - x_min
+            y_range = y_max - y_min
+            z_range = z_max - z_min
+            max_range = max(x_range, y_range, z_range)
+
+            # Calculate aspect-ratio-preserving resolution for each dimension
+            # The largest dimension gets the user-specified resolution
+            if max_range > 0:
+                res_x = max(8, int(resolution * x_range / max_range))
+                res_y = max(8, int(resolution * y_range / max_range))
+                res_z = max(8, int(resolution * z_range / max_range))
+            else:
+                res_x = res_y = res_z = resolution
+
             print(
-                f"[NetCDF] Frame {frame+1}: Original size ({orig_z}, {orig_y},"
-                f" {orig_x})"
+                f"[NetCDF] Frame {frame+1}: Original size ({orig_x}, {orig_y},"
+                f" {orig_z}), Coordinate ranges: X={x_range:.2f}, Y={y_range:.2f},"
+                f" Z={z_range:.2f}"
             )
 
             # Resample to target resolution if needed
-            needs_resampling = (
-                orig_z != resolution or orig_y != resolution or orig_x != resolution
-            )
+            needs_resampling = orig_x != res_x or orig_y != res_y or orig_z != res_z
 
             if needs_resampling:
                 print(
-                    f"[NetCDF] Frame {frame+1}: Resampling to ({resolution},"
-                    f" {resolution}, {resolution})..."
+                    f"[NetCDF] Frame {frame+1}: Resampling to ({res_x}, {res_y},"
+                    f" {res_z}) to preserve aspect ratio..."
                 )
                 # Use xarray's interpolation with dask support
-                z_new = np.linspace(
-                    float(data_slice[z_dim].min()),
-                    float(data_slice[z_dim].max()),
-                    resolution,
-                )
-                y_new = np.linspace(
-                    float(data_slice[y_dim].min()),
-                    float(data_slice[y_dim].max()),
-                    resolution,
-                )
-                x_new = np.linspace(
-                    float(data_slice[x_dim].min()),
-                    float(data_slice[x_dim].max()),
-                    resolution,
-                )
+                x_new = np.linspace(x_min, x_max, res_x)
+                y_new = np.linspace(y_min, y_max, res_y)
+                z_new = np.linspace(z_min, z_max, res_z)
 
                 data_slice = data_slice.interp(
-                    {z_dim: z_new, y_dim: y_new, x_dim: x_new}, method="linear"
+                    {x_dim: x_new, y_dim: y_new, z_dim: z_new}, method="linear"
                 )
 
             # Now compute the data
@@ -876,7 +886,13 @@ class ImportNetCDFOperator(bpy.types.Operator, ImportHelper):
                 # Set background to 0 after normalization
                 background_value = 0.0
             else:
-                background_value = data_min if data_min < 0 else 0.0
+                # For very small values (like 1e-4), use a negative background
+                # to avoid pruning valid data as "inactive"
+                background_value = 0.0
+                # if data_min >= 0 and data_min < 1e-3:
+                #     background_value = -1e-6
+                # else:
+                #     background_value = data_min if data_min < 0 else 0.0
 
             # Replace NaN values with background value
             # This handles both original NaNs and threshold-excluded values
@@ -891,12 +907,30 @@ class ImportNetCDFOperator(bpy.types.Operator, ImportHelper):
 
             # Copy data to grid (openvdb expects C-order array in X, Y, Z order)
             # copyFromArray automatically marks background values as inactive for sparse storage
-            grid.copyFromArray(data_3d.astype(np.float32))
+            grid.copyFromArray(data_3d)
 
-            # Set grid transform for proper scaling
-            # VDB uses index space, so we set voxel size based on scale factor
-            voxel_size = self.scale_factor
-            grid.transform = openvdb.createLinearTransform(voxelSize=voxel_size)
+            # Calculate voxel size based on the largest dimension
+            # This ensures uniform voxel size while preserving aspect ratio
+            # The voxel size is: (largest coordinate range) / (resolution) * scale_factor
+            voxel_size = (max_range / resolution) * self.scale_factor
+
+            # Create transform with proper origin to maintain spatial position
+            # The origin positions index (0,0,0) at the minimum coordinate values
+            transform = openvdb.createLinearTransform(voxelSize=voxel_size)
+
+            # Set translation to position the volume correctly in world space
+            # This ensures sparse data doesn't collapse to the origin
+            origin_x = x_min * self.scale_factor
+            origin_y = y_min * self.scale_factor
+            origin_z = z_min * self.scale_factor
+            transform.postTranslate((origin_x, origin_y, origin_z))
+
+            grid.transform = transform
+
+            print(
+                f"[NetCDF] Frame {frame+1}: Voxel size={voxel_size:.6f}, "
+                f"Origin=({origin_x:.2f}, {origin_y:.2f}, {origin_z:.2f})"
+            )
 
             # Set metadata for Blender
             grid["class"] = "fog volume"  # Hint for Blender's volume shader
@@ -932,7 +966,9 @@ class ImportNetCDFOperator(bpy.types.Operator, ImportHelper):
             if vol_obj and vol_obj.type == "VOLUME":
                 # Rename
                 vol_name = (
-                    f"Volume_{frame+1}" if has_time else f"Volume_{self.variable_name}"
+                    f"{self.variable_name}_Volume_{frame+1}"
+                    if has_time
+                    else f"{self.variable_name}_Volume"
                 )
                 vol_obj.name = vol_name
 
